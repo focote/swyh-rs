@@ -25,6 +25,20 @@ use std::{
 
 const NOISE_PERIOD_MS: u64 = 250; // milliseconds
 
+/// STREAMINFO total-samples is a 36-bit field.
+const FLAC_MAX_TOTAL_SAMPLES: u64 = (1 << 36) - 1;
+
+/// Duration declared in the FLAC header of a live stream. Some renderers
+/// (e.g. Bel Canto REFStream) refuse "unknown" (0) and stop playing at the
+/// declared length, so declare a long one.
+const FLAC_DECLARED_HOURS: u64 = 24;
+
+/// Total-samples estimate for STREAMINFO, clamped to the 36-bit field.
+/// Counts per-channel samples, as FLAC does.
+fn total_samples_estimate(sample_rate: u32, hours: u64) -> u64 {
+    (u64::from(sample_rate) * 3600 * hours).min(FLAC_MAX_TOTAL_SAMPLES)
+}
+
 /// the flacwriter receives the data from the encoder
 /// and writes them to the flac output channel
 #[derive(Clone)]
@@ -125,6 +139,7 @@ impl FlacChannel {
                     .sample_rate(sr)
                     .compression_level(1)
                     .set_limit_min_bitrate(true)
+                    .total_samples_estimate(total_samples_estimate(sr, FLAC_DECLARED_HOURS))
                     .init_write(&mut outw)
                     .unwrap_or_else(|e| {
                         let msg = fl!("err-flac-start-error", "error" = format!("{e:?}"));
@@ -280,5 +295,15 @@ mod tests {
         let first = noise_burst(&mut rng);
         let second = noise_burst(&mut rng);
         assert_ne!(first, second);
+    }
+
+    #[test]
+    fn total_samples_estimate_24h_44100() {
+        assert_eq!(total_samples_estimate(44100, 24), 3_810_240_000);
+    }
+
+    #[test]
+    fn total_samples_estimate_clamps_to_36_bits() {
+        assert_eq!(total_samples_estimate(192_000, 400), FLAC_MAX_TOTAL_SAMPLES);
     }
 }
